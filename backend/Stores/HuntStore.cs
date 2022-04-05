@@ -16,29 +16,56 @@ public class HuntStore
     internal async IAsyncEnumerable<Hunt> GetAll()
     {
         using var connection = db.GetConnection();
-        var query = @"
-                SELECT *
-                FROM [Hunt] h
-                LEFT JOIN [Encounters] e ON e.[HuntId] = h.[Id]
-                WHERE [Complete] = 0
-                GROUP BY h.[Id]
-            ";
+        var query = GetHuntQuery("WHERE [Complete] = 0");
         foreach (var item in await connection.QueryAsync<StoredHunt>(query))
         {
             yield return item.ToHunt();
         };
     }
 
+    private static string GetHuntQuery(string? whereClause)
+    {
+        return @$"
+            SELECT 
+                h.[Id],
+                g.[Name] as Game,
+                t.[Type],
+                h.[Target],
+                COALESCE(SUM(e.[Count]), 0) AS Encounters,
+                h.[Complete]
+            FROM [Hunt] h
+            INNER JOIN [Game] g ON g.[Id] = h.[Game]
+            INNER JOIN [HuntType] t on t.[Id] = h.[Type]
+            LEFT JOIN [Encounter] e ON e.[HuntId] = h.[Id]
+            {whereClause ?? ""}
+            GROUP BY h.[Id], g.[Name], t.[Type], h.[Target], h.[Complete]
+        ";
+    }
+
+    internal async IAsyncEnumerable<Hunt> GetCompleted()
+    {
+        using var connection = db.GetConnection();
+        var query = GetHuntQuery("WHERE h.[Complete] = 1");
+        foreach (var record in await connection.QueryAsync<StoredHunt>(query))
+        {
+            yield return record!.ToHunt();
+        }
+    }
+
+    internal async IAsyncEnumerable<string> GetHuntTypes()
+    {
+        using var connection = db.GetConnection();
+        var query = "SELECT [Type] FROM [HuntType]";
+        foreach (var record in await connection.QueryAsync<string>(query))
+        {
+            yield return record;
+        }
+    }
+
     public async Task<Hunt?> GetHunt(int id)
     {
         using var connection = db.GetConnection();
-        var query = @$"
-                SELECT h.*, SUM(e.[Count]) AS Encounters
-                FROM [Hunt] h
-                LEFT JOIN [Encounters] e ON e.[HuntId] = h.[Id]
-                WHERE h.[Id] = {id}
-                GROUP BY h.[Id]
-            ";
+        var query = GetHuntQuery($"WHERE h.[Id] = {id}");
         var result = await connection.QuerySingleOrDefaultAsync<StoredHunt>(query);
         return result?.ToHunt();
     }
@@ -46,19 +73,21 @@ public class HuntStore
     public async IAsyncEnumerable<Hunt> GetActive()
     {
         using var connection = db.GetConnection();
-        var query = @"
-                SELECT h.*, SUM(e.[Count]) AS Encounters 
-                FROM [Hunt] h
-                LEFT JOIN [Encounters] e ON e.[HuntId] = h.[Id]
-                WHERE [Complete] = 0 GROUP BY h.[Id]
-            ";
+        var query = GetHuntQuery("WHERE h.[Complete] = 0");
         foreach (var item in await connection.QueryAsync<StoredHunt>(query))
         {
             yield return item.ToHunt();
         }
     }
 
-    public async Task<long> CreateHunt(string game, string type, string? target)
+    internal async Task<long?> GetHuntTypeId(string type)
+    {
+        using var connection = db.GetConnection();
+        var query = "SELECT [Id] FROM [HuntType] WHERE UPPER([Type]) = UPPER(@type)";
+        return await connection.ExecuteScalarAsync<long?>(query, new { type });
+    }
+
+    public async Task<long> CreateHunt(long game, long type, string? target)
     {
         using var connection = db.GetConnection();
         var query = @"
@@ -79,7 +108,7 @@ public class HuntStore
         using var connection = db.GetConnection();
         var date = DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss");
         var statement = @$"
-                INSERT INTO [Encounters]([HuntId], [Count], [Date])
+                INSERT INTO [Encounter]([HuntId], [Count], [DateTime])
                 VALUES ({id}, {count}, @date)
             ";
         var result = await connection.ExecuteAsync(statement, new { date });
@@ -94,15 +123,16 @@ public class HuntStore
 
         return result == 1;
     }
-}
 
-public record StoredHunt(int Id, string Game, string Type, string? Target, int Encounters, int Complete)
-{
-    public StoredHunt() : this(default, "", "", default, default, default) { }
-
-    public Hunt ToHunt()
+    private record StoredHunt(long Id, string Game, string Type, string? Target, long Encounters, long Complete)
     {
-        return new(Id, Game, Type, Target, Encounters, Complete == 1);
+        public StoredHunt() : this(default, string.Empty, string.Empty, default, default, default) { }
+
+        public Hunt ToHunt()
+        {
+            return new(Id, Game, Type, Target, Encounters, Complete == 1);
+        }
     }
 }
+
 

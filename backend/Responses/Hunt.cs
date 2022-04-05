@@ -1,10 +1,10 @@
 namespace backend.Responses;
 
 public record Hunt(
-    int Id,
+    long Id,
     string Game,
     string Type,
     string? Target,
-    int Encounters,
+    long Encounters,
     bool Completed
 );

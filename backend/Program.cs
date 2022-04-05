@@ -1,4 +1,5 @@
 using backend;
+using backend.Endpoints;
 using backend.Requests;
 using backend.Services;
 using backend.Stores;
@@ -20,6 +21,7 @@ builder.Services.Configure<DatabaseOptions>(builder.Configuration.GetSection(nam
 
 builder.Services.AddTransient<DatabaseService>();
 builder.Services.AddTransient<HuntStore>();
+builder.Services.AddTransient<GameStore>();
 
 var app = builder.Build();
 
@@ -36,25 +38,30 @@ app.UseCors("all");
 
 app.UseAuthorization();
 
-app.MapGet("/hunt", (HuntStore store) => store.GetAll());
+app.MapGet("hunts", (bool? active, HuntStore store)
+    => active is null
+        ? store.GetAll()
+        : active.Value
+            ? store.GetActive()
+            : store.GetCompleted());
 
-app.MapGet("/hunt/active", (HuntStore store) => store.GetActive());
+app.MapGet("hunts/types", (HuntStore store) => store.GetHuntTypes());
 
-app.MapGet("/hunt/{id}", async (int id, HuntStore store) =>
+app.MapGet("hunts/{id}", async (int id, HuntStore store) =>
     {
         var result = await store.GetHunt(id);
         return result is null ? Results.NotFound() : Results.Ok(result);
     });
 
-app.MapPost("hunt/new", async (NewHunt hunt, HuntStore store)
-    => hunt.Game is null || hunt.Type is null
-        ? Results.BadRequest("Hunt must have a game and type")
-        : Results.Ok(await store.CreateHunt(hunt.Game, hunt.Type, hunt.Target)));
+app.MapPost("hunts", (NewHunt hunt, HuntStore huntStore, GameStore gameStore)
+    => Endpoints.NewHunt(hunt, huntStore, gameStore));
 
-app.MapPost("hunt/{id}/+", async (int id, int count, HuntStore store)
+app.MapPost("hunts/{id}/+", async (int id, int count, HuntStore store)
     => await store.AddEncounters(id, count) ? Results.Ok() : Results.NotFound());
 
-app.MapPost("/hunt/{id}/completed", async (int id, HuntStore store)
+app.MapPost("hunts/{id}/completed", async (int id, HuntStore store)
     => await store.CompleteHunt(id) ? Results.Ok() : Results.NotFound());
+
+app.MapGet("games", (GameStore store) => store.All());
 
 app.Run();
